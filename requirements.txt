@@ -1,3 +1,4 @@
 streamlit>=1.40,<2
 deepface==0.0.100
+retina-face==0.0.18
 tf-keras>=2.16
