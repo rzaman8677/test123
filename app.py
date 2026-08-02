@@ -5,14 +5,13 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-import cv2
 import numpy as np
 import streamlit as st
 from deepface import DeepFace
 from PIL import Image, ImageDraw
 
 MODEL_NAME = "Facenet512"
-DETECTOR_BACKEND = "opencv"
+DETECTOR_BACKEND = "retinaface"
 SUPPORTED_TYPES = ["jpg", "jpeg", "png", "webp"]
 
 st.set_page_config(page_title="Specific Person Face Matcher", layout="wide")
