@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import tempfile
 import zipfile
@@ -12,7 +13,9 @@ from PIL import Image, ImageDraw
 
 MODEL_NAME = "Facenet512"
 DETECTOR_BACKEND = "retinaface"
+NORMALIZATION = "base"
 SUPPORTED_TYPES = ["jpg", "jpeg", "png", "webp"]
+PROFILE_FORMAT_VERSION = 1
 
 st.set_page_config(page_title="Specific Person Face Matcher", layout="wide")
 st.title("Specific Person Face Matcher")
@@ -44,7 +47,7 @@ def get_faces(uploaded_file):
             detector_backend=DETECTOR_BACKEND,
             enforce_detection=True,
             align=True,
-            normalization="base",
+            normalization=NORMALIZATION,
         )
         image = Image.open(io.BytesIO(uploaded_file.getvalue())).convert("RGB")
         faces = []
@@ -92,6 +95,61 @@ def draw_boxes(image: Image.Image, faces, scores=None, threshold=None):
         draw.rectangle((x, y, x + w, y + h), width=4)
         draw.text((x + 4, max(0, y - 16)), label)
     return output
+
+
+def build_target_profile_zip(embeddings, threshold: float) -> bytes:
+    reference_embeddings = np.stack(embeddings).astype(np.float32)
+    mean_embedding = np.mean(reference_embeddings, axis=0).astype(np.float32)
+
+    profile_buffer = io.BytesIO()
+    np.savez_compressed(
+        profile_buffer,
+        reference_embeddings=reference_embeddings,
+        mean_embedding=mean_embedding,
+    )
+
+    metadata = {
+        "format": "specific-person-face-profile",
+        "format_version": PROFILE_FORMAT_VERSION,
+        "model_name": MODEL_NAME,
+        "detector_backend": DETECTOR_BACKEND,
+        "normalization": NORMALIZATION,
+        "align": True,
+        "distance_metric": "cosine_similarity",
+        "matching_strategy": "maximum similarity against any reference embedding",
+        "similarity_threshold": float(threshold),
+        "reference_count": int(reference_embeddings.shape[0]),
+        "embedding_dimension": int(reference_embeddings.shape[1]),
+        "contains_source_images": False,
+    }
+
+    instructions = f"""Specific Person Face Recognition Profile
+
+This archive is the target-specific recognition profile created by the app.
+It does NOT contain the full FaceNet512 neural-network weights and it does not contain the source photos.
+
+Files:
+- target_profile.npz: reference_embeddings and mean_embedding
+- metadata.json: model, detector, normalization, threshold, and matching settings
+
+To reuse this profile, generate a {MODEL_NAME} embedding for a detected face using the same settings in metadata.json, then compare it with each reference embedding using cosine similarity. The current app considers the face a match when the maximum similarity is at least the stored threshold.
+
+Treat this file as biometric data and keep it private.
+"""
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("target_profile.npz", profile_buffer.getvalue())
+        zf.writestr("metadata.json", json.dumps(metadata, indent=2))
+        zf.writestr("README.txt", instructions)
+
+    return zip_buffer.getvalue()
+
+
+def safe_profile_name(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value.strip())
+    cleaned = cleaned.strip("_")
+    return cleaned or "target_person_face_profile"
 
 
 if "reference_results" not in st.session_state:
@@ -258,8 +316,35 @@ if st.session_state.scan_results:
         mime="application/zip",
     )
 
+st.header("3. Download the target recognition profile")
+st.write(
+    "Export the person-specific face profile so you can reuse it later without uploading the reference photos again. "
+    "The export contains biometric embeddings and configuration metadata, not the original images."
+)
+
+if st.session_state.target_embeddings:
+    profile_name = st.text_input(
+        "Profile file name",
+        value="target_person_face_profile",
+        help="This only changes the downloaded ZIP file name.",
+    )
+    export_bytes = build_target_profile_zip(st.session_state.target_embeddings, threshold)
+    st.download_button(
+        "Download target face-recognition profile",
+        data=export_bytes,
+        file_name=f"{safe_profile_name(profile_name)}.zip",
+        mime="application/zip",
+        type="primary",
+    )
+    st.caption(
+        f"Includes {len(st.session_state.target_embeddings)} reference embedding(s), a mean embedding, "
+        f"{MODEL_NAME} / {DETECTOR_BACKEND} settings, and the current threshold ({threshold:.2f})."
+    )
+else:
+    st.info("Build the target profile in Step 1 before downloading it here.")
+
 st.divider()
 st.caption(
     "Use only with the subject's permission. Similarity scores are model outputs, not calibrated probabilities. "
-    "For better reliability, use several clear reference faces covering different angles and lighting."
+    "Face embeddings are biometric data, so store exported profiles securely."
 )
