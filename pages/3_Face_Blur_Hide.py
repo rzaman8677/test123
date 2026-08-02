@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 from deepface import DeepFace
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 TYPES = ["jpg", "jpeg", "png", "webp"]
 
@@ -94,6 +94,38 @@ def annotate(image, faces, scores, threshold):
     return img
 
 
+def get_font(size: int):
+    try:
+        return ImageFont.truetype("DejaVuSans-Bold.ttf", size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def draw_centered_text(image, text, face_box, text_color, font_size):
+    if not text.strip():
+        return image
+
+    draw = ImageDraw.Draw(image)
+    font = get_font(font_size)
+    x1, y1, x2, y2 = face_box
+    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=2)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    tx = x1 + ((x2 - x1) - tw) // 2
+    ty = y1 + ((y2 - y1) - th) // 2
+
+    outline = "black" if text_color.lower() != "black" else "white"
+    draw.text(
+        (tx, ty),
+        text,
+        fill=text_color,
+        font=font,
+        stroke_width=2,
+        stroke_fill=outline,
+    )
+    return image
+
+
 def png_bytes(image):
     buf = io.BytesIO()
     image.save(buf, format="PNG")
@@ -112,6 +144,18 @@ scale = st.slider("Face area size", 1.00, 1.50, 1.12, 0.01)
 strength = st.slider("Blur strength", 4, 40, 18, 1, disabled=(method != "Blur"))
 pixel = st.slider("Pixel size", 4, 40, 12, 1, disabled=(method != "Pixelate"))
 hide_all = st.checkbox("Hide every matching instance", value=True)
+
+st.subheader("Optional text overlay")
+overlay_text = st.text_input(
+    "Text to put over the hidden face",
+    value="",
+    placeholder="Type anything here",
+)
+text_col1, text_col2 = st.columns(2)
+with text_col1:
+    text_color = st.selectbox("Text color", ["white", "black", "red", "yellow", "blue"])
+with text_col2:
+    font_size = st.slider("Text size", 10, 80, 30, 2)
 
 if st.button("Detect target and hide face", type="primary", disabled=not (profile and photo)):
     try:
@@ -142,18 +186,28 @@ if st.button("Detect target and hide face", type="primary", disabled=not (profil
         edited = image.copy()
         for i in matches:
             x1, y1, x2, y2 = box(faces[i]["area"], edited.size, scale)
+            face_box = (x1, y1, x2, y2)
+
             if method == "Blur":
-                region = edited.crop((x1, y1, x2, y2)).filter(ImageFilter.GaussianBlur(radius=strength))
+                region = edited.crop(face_box).filter(ImageFilter.GaussianBlur(radius=strength))
                 edited.paste(region, (x1, y1))
             elif method == "Pixelate":
-                region = edited.crop((x1, y1, x2, y2))
+                region = edited.crop(face_box)
                 w, h = region.size
                 small = region.resize((max(1, w // pixel), max(1, h // pixel)), Image.Resampling.BILINEAR)
                 edited.paste(small.resize((w, h), Image.Resampling.NEAREST), (x1, y1))
             else:
                 draw = ImageDraw.Draw(edited)
                 fill = (0, 0, 0) if method == "Black box" else (255, 255, 255)
-                draw.rectangle((x1, y1, x2, y2), fill=fill)
+                draw.rectangle(face_box, fill=fill)
+
+            edited = draw_centered_text(
+                edited,
+                overlay_text,
+                face_box,
+                text_color,
+                font_size,
+            )
 
         st.success(f"Processed {len(matches)} matching face(s).")
         c1, c2 = st.columns(2)
