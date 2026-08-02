@@ -1,0 +1,19 @@
+# Face images and local biometric data
+reference_images/
+scan_images/
+uploads/
+results/
+*.npy
+*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
